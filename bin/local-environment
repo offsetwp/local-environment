@@ -1,0 +1,134 @@
+#!/bin/sh
+#
+# The local server of an OffsetWP project: Caddy, PHP 8.5 by default, MariaDB or MySQL, and
+# Mailpit, run by Docker Compose. It runs from the root of the project, wherever it is called
+# from.
+#
+# The stack runs from vendor/offsetwp/local-environment, set from the .env of the project
+# and from the compose.override.yaml at its root, if there is one. `extract` copies it into
+# the project, where it runs from compose.yaml, and where plain `docker compose` runs it too.
+
+set -eu
+
+self=vendor/bin/local-environment
+package=vendor/offsetwp/local-environment
+
+usage() {
+  cat <<EOF
+Usage: $self <command> [arguments]
+
+  up [options]   Start the stack: docker compose up -d --wait [options]
+  wp …           wp-cli, in the php container
+  composer …     Composer, in the php container
+  trust          Over HTTPS, make this computer trust the certificates of Caddy (macOS, sudo)
+  extract        Copy compose.yaml and docker/ into the project, to change them
+  help           This list
+
+Anything else goes to docker compose: down, ps, logs -f caddy, up --build…
+EOF
+}
+
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+# docker compose, on the compose.yaml of the project once extracted; on the one of the
+# package otherwise, from the root of the project, with its compose.override.yaml if any.
+# Docker Compose merges that file on its own in the first case.
+compose() {
+  if [ -f compose.yaml ]; then
+    docker compose "$@"
+  elif [ -f compose.override.yaml ]; then
+    docker compose --project-directory . -f "$package/compose.yaml" -f compose.override.yaml "$@"
+  else
+    docker compose --project-directory . -f "$package/compose.yaml" "$@"
+  fi
+}
+
+# Whether a service of the stack is running.
+running() {
+  compose ps --status running --services | grep -qx "$1"
+}
+
+# Runs a command in the php container, with a terminal only when there is one to give it.
+in_php() {
+  running php || fail "The stack is not running: $self up"
+
+  if [ -t 0 ] && [ -t 1 ]; then
+    compose exec php "$@"
+  else
+    compose exec -T php "$@"
+  fi
+}
+
+command=${1:-help}
+if [ $# -gt 0 ]; then
+  shift
+fi
+
+case $command in
+  help | -h | --help)
+    usage
+    exit 0
+    ;;
+esac
+
+# Composer runs this file from vendor/offsetwp/local-environment/bin, by a path that keeps
+# the symbolic link of a path repository: the root of the project is four folders up.
+cd "$(dirname "$0")/../../../.."
+[ -f "$package/compose.yaml" ] \
+  || fail "No $package in $PWD: $self runs in a project where Composer installed offsetwp/local-environment."
+
+case $command in
+  extract)
+    [ ! -e compose.yaml ] || fail 'compose.yaml exists already: the stack is extracted.'
+    [ ! -e docker ] || fail 'docker/ exists already: move it away first.'
+    cp -R "$package/docker" docker
+    sed "s#\./$package/docker/#./docker/#g" "$package/compose.yaml" > compose.yaml
+    echo "Extracted compose.yaml and docker/: $self runs them now, and so does docker compose."
+    exit 0
+    ;;
+esac
+
+command -v docker > /dev/null || fail 'Docker is not installed: https://docs.docker.com/get-started/get-docker/'
+docker info > /dev/null 2>&1 || fail 'Docker is not running.'
+
+case $command in
+  up)
+    # When the stack fails to start, Caddy has usually said why: WP_HOME and the ports
+    # disagree, for one. What it said during this start goes along with the failure, and
+    # nothing older.
+    since=$(date +%s)
+    compose up -d --wait "$@" || {
+      compose logs --no-log-prefix --since "$since" caddy >&2
+      exit 1
+    }
+    ;;
+  wp)
+    in_php php bin/wp-cli "$@"
+    ;;
+  composer)
+    in_php composer "$@"
+    ;;
+  trust)
+    # Over HTTPS, Caddy creates its local authority on its first start. Until this computer
+    # trusts it, the browser warns about the site.
+    running caddy || fail "The stack is not running: $self up"
+    case $(compose exec -T caddy printenv WP_HOME) in
+      https://*) ;;
+      *) fail 'WP_HOME starts with http://: Caddy serves no certificate to trust. See HTTPS, in the README of offsetwp/local-environment.' ;;
+    esac
+    mkdir -p var
+    compose cp caddy:/data/caddy/pki/authorities/local/root.crt var/caddy-root.crt
+    if [ "$(uname -s)" = Darwin ]; then
+      sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain var/caddy-root.crt
+      echo 'This computer trusts the certificates of Caddy now, for this project.'
+    else
+      echo 'Import var/caddy-root.crt into the certificate store of this computer, or of your browser.'
+    fi
+    ;;
+  *)
+    compose "$command" "$@"
+    ;;
+esac

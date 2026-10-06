@@ -1,0 +1,123 @@
+# The local server of an OffsetWP project, from offsetwp/local-environment:
+#
+#   network   the network Caddy and PHP share, with the ports of the site
+#   caddy     the address WP_HOME gives, http://localhost by default, or over HTTPS from
+#             the local authority of Caddy when it starts with https://
+#   php       PHP FPM, 8.5 by default, with Composer, Xdebug (off) and the sendmail of Mailpit
+#   database  MariaDB 11.8 by default, on 127.0.0.1:3306 for a client such as Sequel Ace
+#   mailpit   every email WordPress sends, on http://localhost:8025
+#
+# vendor/bin/local-environment runs this file from vendor/offsetwp/local-environment, the
+# root of the project as its directory, or from the root of the project once extracted.
+# Either way, it is set from the .env of the project, and from compose.override.yaml at its
+# root: see the README of offsetwp/local-environment.
+
+services:
+  # Caddy and PHP share one network, where localhost is Caddy for PHP too: WordPress reaches
+  # itself on WP_HOME, for WP-Cron, Site Health and the like, and Caddy reaches PHP on
+  # 127.0.0.1:9000. A container of its own holds that network, so that either of them can
+  # restart without cutting the other off: Docker would, were it one of theirs. It runs
+  # the image of Caddy, already there, and sleeps.
+  network:
+    image: caddy:2-alpine
+    command: [sleep, infinity]
+    init: true
+    # The ports are the same in the container as on this computer: Caddy listens on the
+    # port of WP_HOME, and over HTTPS on the HTTP one too, which redirects there.
+    ports:
+      - "${DOCKER_HTTP_PORT:-80}:${DOCKER_HTTP_PORT:-80}"
+      - "${DOCKER_HTTPS_PORT:-443}:${DOCKER_HTTPS_PORT:-443}"
+      - "${DOCKER_HTTPS_PORT:-443}:${DOCKER_HTTPS_PORT:-443}/udp"
+    extra_hosts:
+      # Where Xdebug finds the IDE. Docker Desktop defines this name; Linux needs the line.
+      - host.docker.internal:host-gateway
+
+  caddy:
+    image: caddy:2-alpine
+    # Checks WP_HOME against the ports Docker publishes, then starts Caddy.
+    command: [sh, /etc/caddy/caddy.sh]
+    network_mode: service:network
+    environment:
+      WP_HOME: ${WP_HOME:-http://localhost}
+      DOCKER_HTTP_PORT: ${DOCKER_HTTP_PORT:-80}
+      DOCKER_HTTPS_PORT: ${DOCKER_HTTPS_PORT:-443}
+    volumes:
+      - ./vendor/offsetwp/local-environment/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./vendor/offsetwp/local-environment/docker/caddy/caddy.sh:/etc/caddy/caddy.sh:ro
+      - .:/app:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      network:
+        condition: service_started
+        # A new network for the network container, once restarted: Caddy joins it.
+        restart: true
+
+  php:
+    # An image per PHP version: a new DOCKER_PHP_VERSION builds its own on the next up, and
+    # the one before is still there to go back to.
+    image: ${COMPOSE_PROJECT_NAME}-php:${DOCKER_PHP_VERSION:-8.5}
+    build:
+      context: ./vendor/offsetwp/local-environment/docker/php
+      args:
+        # The PHP version, a tag of the official image: DOCKER_PHP_VERSION="8.1", "8.6-rc"…
+        PHP_VERSION: ${DOCKER_PHP_VERSION:-8.5}
+        # The extensions the project adds: DOCKER_PHP_EXTENSIONS="redis apcu", then
+        # vendor/bin/local-environment up --build.
+        PHP_EXTENSIONS: ${DOCKER_PHP_EXTENSIONS:-}
+    # The UID of this computer's user, so that what PHP writes in the project belongs to
+    # that user. Docker Desktop maps ownership on its own; Linux needs the right UID.
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    network_mode: service:network
+    volumes:
+      # Mounted rather than built into the image: a change to php.ini shows once PHP
+      # restarts, on vendor/bin/local-environment restart php, with no rebuild.
+      - ./vendor/offsetwp/local-environment/docker/php/php.ini:/usr/local/etc/php/conf.d/zz-project.ini:ro
+      - .:/app
+    environment:
+      # The database answers on its service name, whatever DB_HOST says in .env: Symfony
+      # Dotenv never overrides a variable the container already has.
+      DB_HOST: database
+      # wp-cli and Composer keep their caches under HOME, which that UID has none of.
+      HOME: /tmp
+      XDEBUG_MODE: ${XDEBUG_MODE:-off}
+      # The limits php.ini reads. A value is always given: PHP would take an empty one.
+      PHP_MEMORY_LIMIT: ${DOCKER_PHP_MEMORY_LIMIT:-256M}
+      PHP_UPLOAD_MAX_SIZE: ${DOCKER_PHP_UPLOAD_MAX_SIZE:-64M}
+      PHP_MAX_EXECUTION_TIME: ${DOCKER_PHP_MAX_EXECUTION_TIME:-120}
+    depends_on:
+      network:
+        condition: service_started
+        restart: true
+      database:
+        condition: service_healthy
+
+  database:
+    # MariaDB 11.8, or the image DOCKER_DATABASE_IMAGE gives: mysql:8.4, mariadb:10.11…
+    image: ${DOCKER_DATABASE_IMAGE:-mariadb:11.8}
+    environment:
+      # The site connects as root, with the password and the database .env gives. MariaDB
+      # reads the MYSQL_* variables too: they serve either image.
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_DATABASE:-wordpress}
+    ports:
+      - "127.0.0.1:${DOCKER_DATABASE_PORT:-3306}:3306"
+    volumes:
+      - database:/var/lib/mysql
+    healthcheck:
+      # The check of the MariaDB image, or mysqladmin for MySQL, which has none. Both go over
+      # TCP: the server of the first start, which creates the database, listens on its socket
+      # only, and so never passes for ready. A ping succeeds even when refused: no password.
+      test: [CMD-SHELL, "healthcheck.sh --connect --innodb_initialized || mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.31
+    ports:
+      - "127.0.0.1:${DOCKER_MAILPIT_PORT:-8025}:8025"
+
+volumes:
+  database:
+  caddy_data:
+  caddy_config:

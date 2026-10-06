@@ -1,0 +1,28 @@
+{
+  "name": "offsetwp/local-environment",
+  "description": "The local server of an OffsetWP project, on Docker: Caddy, PHP 8.5 by default, MariaDB or MySQL, and Mailpit",
+  "type": "library",
+  "license": "MIT",
+  "keywords": [
+    "offsetwp",
+    "wordpress",
+    "docker",
+    "caddy",
+    "local",
+    "development"
+  ],
+  "homepage": "https://offsetwp.github.io",
+  "authors": [
+    {
+      "name": "Jérôme Wohlschlegel",
+      "email": "jerome.wohlschlegel@gmail.com"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/offsetwp/local-environment/issues",
+    "source": "https://github.com/offsetwp/local-environment"
+  },
+  "bin": [
+    "bin/local-environment"
+  ]
+}

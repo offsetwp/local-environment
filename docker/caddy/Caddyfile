@@ -1,0 +1,22 @@
+# Caddy serves public/ on the address of WP_HOME, and hands PHP to the php service.
+{
+	# Over HTTPS, certificates come from the local authority of Caddy, which needs nothing
+	# public to reach nor to validate. `vendor/bin/local-environment trust` makes this
+	# computer trust it.
+	local_certs
+	# The HTTP port Docker publishes: over HTTPS, it redirects to WP_HOME.
+	http_port {$DOCKER_HTTP_PORT:80}
+}
+
+# The scheme, the name and the port of WP_HOME, which caddy.sh checks and hands over.
+{$SITE_ADDRESS:http://localhost} {
+	root * /app/public
+	encode
+	# PHP shares the network of Caddy: see the network service, in compose.yaml.
+	php_fastcgi 127.0.0.1:9000
+	file_server {
+		# The rewrite rules of Apache, and their example, for the stacks that run it: Caddy
+		# has its own.
+		hide .htaccess .htaccess.example
+	}
+}
