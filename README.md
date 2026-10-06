@@ -1,9 +1,12 @@
+![OffsetWP Local Environment](https://raw.githubusercontent.com/offsetwp/art/refs/heads/main/cover/cover-local-environment-light.png#gh-light-mode-only)
+![OffsetWP Local Environment](https://raw.githubusercontent.com/offsetwp/art/refs/heads/main/cover/cover-local-environment-dark.png#gh-dark-mode-only)
+
 <h1 align="center">
     OffsetWP Local Environment
 </h1>
 
 <p align="center">
-	The local server of an <a href="https://github.com/offsetwp">OffsetWP</a> project, on Docker.
+	The local server of an OffsetWP project, on Docker.
 </p>
 
 <br/>
@@ -14,21 +17,17 @@
 - ✉️ Mailpit, catching every email WordPress sends
 - 📦 Nothing in the project: the stack runs from `vendor/`, set from `.env`, until you extract it
 
-## Requirements
-
-- [Docker](https://docs.docker.com/get-started/get-docker/) with Compose
-- An OffsetWP project, such as one created from
-  [offsetwp/project-skeleton](https://github.com/offsetwp/project-skeleton)
-
 ## Installation
 
-The site answers on the address `WP_HOME` gives, in the `.env` of the project:
+**requirements:**
+- Docker + Docker compose
 
+**.env:**
 ```dotenv
-# .env
 WP_HOME='http://localhost' # Over HTTPS, see HTTPS section; on other ports, see Custom ports section.
 ```
 
+**command:**
 ```bash
 composer require --dev offsetwp/local-environment
 vendor/bin/local-environment up
